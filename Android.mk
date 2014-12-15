@@ -604,6 +604,9 @@ LOCAL_SRC_FILES_arm += \
 	src/opts/SkUtils_opts_arm_neon.cpp \
 	src/opts/S32A_Opaque_BlitRow32_neon.S \
 	src/opts/S32A_Blend_BlitRow32_neon.S \
+	src/opts/S32A_Blend_BlitRow32_arm.S \
+	src/opts/S32A_D565_Opaque_arm.S \
+	src/opts/S32A_Opaque_BlitRow32_arm.S \
 	src/opts/SkBitmapProcState_arm_neon.cpp \
 	src/opts/SkBitmapProcState_matrixProcs_neon.cpp \
 	src/opts/SkBlitMask_opts_arm_neon.cpp \

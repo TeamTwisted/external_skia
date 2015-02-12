@@ -5,7 +5,7 @@
 #
 ###############################################################################
 
-ifeq ($(call is-vendor-board-platform,QCOM),true)
+ifneq ($(call is-vendor-board-platform,QCOM),true)
 
 LOCAL_PATH:= $(call my-dir)
 include $(CLEAR_VARS)

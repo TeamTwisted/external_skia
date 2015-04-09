@@ -590,7 +590,6 @@ LOCAL_MODULE := \
 
 LOCAL_SRC_FILES_arm += \
 	src/core/SkUtilsArm.cpp \
-	src/opts/memset.arm.S \
 	src/opts/SkBitmapProcState_opts_arm.cpp \
 	src/opts/SkBlitMask_opts_arm.cpp \
 	src/opts/SkBlitRow_opts_arm.cpp \

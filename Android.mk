@@ -601,8 +601,7 @@ LOCAL_SRC_FILES_arm += \
 
 ifeq ($(ARCH_ARM_HAVE_NEON), true)
 LOCAL_SRC_FILES_arm += \
-	src/opts/memset16_neon.S \
-	src/opts/memset32_neon.S \
+	src/opts/SkUtils_opts_arm_neon.cpp \
 	src/opts/SkBitmapProcState_arm_neon.cpp \
 	src/opts/SkBitmapProcState_matrixProcs_neon.cpp \
 	src/opts/SkBlitMask_opts_arm_neon.cpp \

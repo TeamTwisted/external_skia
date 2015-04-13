@@ -31,7 +31,7 @@
  */
 arm_memset16:
         .fnstart
-        push        {lr}
+        push        {r4,r5,r6,r7,r8,lr}
 
         /* if count is equal to zero then abort */
         teq         r2, #0
@@ -55,7 +55,7 @@ arm_memset16:
 
 arm_memset32:
         .fnstart
-        push        {lr}
+        push        {r4,r5,r6,r7,r8,lr}
 
         /* if count is equal to zero then abort */
         teq         r2, #0
@@ -67,7 +67,7 @@ arm_memset32:
 
 .Lwork_32:
         /* Set up registers ready for writing them out. */
-        mov         ip, r1
+        mov         r8, r1
         mov         lr, r1
 
         /* Try to align the destination to a cache line. Assume 32
@@ -90,22 +90,28 @@ arm_memset32:
 
         /* Now quickly loop through the cache-aligned data. */
 .Laligned32:
+
+        mov         r4, r1
+        mov         r5, r1
+        mov         r6, r1
+        mov         r7, r1
+
         mov         r3, r1
 1:      subs        r2, r2, #32
-        stmiahs     r0!, {r1,r3,ip,lr}
-        stmiahs     r0!, {r1,r3,ip,lr}
+        stmiahs     r0!, {r1,r3,r4,r5,r6,r7,r8,lr}
         bhs         1b
         add         r2, r2, #32
 
         /* (Optionally) store any remaining trailing bytes.
          * (0-30 bytes, length in r2) */
         movs        r2, r2, lsl #28
-        stmiacs     r0!, {r1,r3,ip,lr}
+        stmiacs     r0!, {r1,r3,r8,lr}
         stmiami     r0!, {r1,lr}
         movs        r2, r2, lsl #2
         strcs       r1, [r0], #4
         strhmi      lr, [r0], #2
 
 .Lfinish:
-        pop         {pc}
+        pop         {r4,r5,r6,r7,r8,lr}
+        bx          lr
         .fnend

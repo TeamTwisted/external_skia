@@ -1341,10 +1341,49 @@ void SkProcCoeffXfermode::xferA8(SkAlpha* SK_RESTRICT dst,
 
     if (NULL != proc) {
         if (NULL == aa) {
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+            if (srcout_modeproc == proc)
+            {
+                asm volatile(
+                        "pld        [%[src], #0]                    \n\t"
+                        "pld        [%[dst], #0]                    \n\t"
+                       "subs       %[count], %[count], #8          \n\t"
+                        "blt        2f                              \n\t"
+
+                        "vmov.u16    q5, #0x100                     \n\t"
+                        "1:                                         \n\t"
+                        "vld1.u8     {d4}, [%[dst]]                 \n\t"
+                        "vld4.u8     {d0, d1, d2, d3}, [%[src]]!    \n\t"
+                        "pld         [%[src], #128]                 \n\t"
+                        "pld         [%[dst], #64]                  \n\t"
+                        "subs        %[count], %[count], #8         \n\t"
+                       "vsubw.u8    q3, q5, d4                     \n\t"
+                        "vmovl.u8    q4, d3                         \n\t"
+                        "vmul.u16    q4, q4, q3                     \n\t"
+                        "vshrn.u16   d3, q4, #8                     \n\t"
+                        "vst1.8      {d3}, [%[dst]]!                \n\t"
+                        "bge         1b                             \n\t"
+
+                        "2:                                         \n\t"
+                        "add        %[count], %[count], #8          \n\t"
+                        :[dst] "+r" (dst), [src] "+r" (src), [count] "+r" (count)
+                        :
+                        :"memory", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11"
+                        );
+                for (int i = count - 1; i >= 0; --i) {
+                    dst[i] = ((src[i] >> 24) * (256 - dst[i]) ) >> 8;
+                }
+            }
+            else
+            {
+#endif
             for (int i = count - 1; i >= 0; --i) {
                 SkPMColor res = proc(src[i], dst[i] << SK_A32_SHIFT);
                 dst[i] = SkToU8(SkGetPackedA32(res));
             }
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+            }
+#endif
         } else {
             for (int i = count - 1; i >= 0; --i) {
                 unsigned a = aa[i];

@@ -213,15 +213,16 @@ void S32A_D565_Opaque_neon(uint16_t* SK_RESTRICT dst,
                       "subs       %[count], %[count], ip      \n\t"
                       "b          9f                          \n\t"
                       // LOOP
-                      "2:                                         \n\t"
+                      "2:                                     \n\t"
 
                       "vld1.16    {q12}, [%[dst]]!            \n\t"
                       "vld4.8     {d0-d3}, [%[src]]!          \n\t"
                       "vst1.16    {q10}, [%[keep_dst]]        \n\t"
                       "sub        %[keep_dst], %[dst], #8*2   \n\t"
                       "subs       %[count], %[count], #8      \n\t"
-                      "9:                                         \n\t"
-                      "pld        [%[dst],#32]                \n\t"
+                      "9:                                     \n\t"
+                      "pld        [%[dst], #32]               \n\t"
+                      "pld        [%[src], #64]               \n\t"
                       // expand 0565 q12 to 8888 {d4-d7}
                       "vmovn.u16  d4, q12                     \n\t"
                       "vshr.u16   q11, q12, #5                \n\t"
@@ -263,7 +264,7 @@ void S32A_D565_Opaque_neon(uint16_t* SK_RESTRICT dst,
 
                       "bne        2b                          \n\t"
 
-                      "1:                                         \n\t"
+                      "1:                                     \n\t"
                       "vst1.16      {q10}, [%[keep_dst]]      \n\t"
                       : [count] "+r" (count)
                       : [dst] "r" (dst), [keep_dst] "r" (keep_dst), [src] "r" (src)
@@ -514,6 +515,7 @@ void S32_D565_Blend_Dither_neon(uint16_t *dst, const SkPMColor *src,
     int scale = SkAlpha255To256(alpha);
 
     if (count >= 8) {
+
         /* select row and offset for dither array */
         const uint8_t *dstart = &gDitherMatrix_Neon[(y&3)*12 + (x&3)];
 
@@ -784,10 +786,21 @@ ALPHA_1_TO_254:
 
         /* get the source */
         src_raw = vreinterpret_u8_u32(vld1_u32(src));
+        asm volatile(
+                "pld   [%[src], #32]   \n\t"
+                :
+                :[src] "r" (src)
+                :"cc", "memory"
+                );
         src_raw_2 = vreinterpret_u8_u32(vld1_u32(src+2));
 
         /* get and hold the dst too */
         dst_raw = vreinterpret_u8_u32(vld1_u32(dst));
+        asm volatile("pld   [%[dst], #32]   \n\t"
+                :
+                :[dst] "r" (dst)
+                :"cc", "memory"
+                );
         dst_raw_2 = vreinterpret_u8_u32(vld1_u32(dst+2));
 
 
@@ -943,7 +956,19 @@ void S32_Blend_BlitRow32_neon(SkPMColor* SK_RESTRICT dst,
 
         // Load
         vsrc = vreinterpret_u8_u32(vld1_u32(src));
+        asm volatile(
+                "pld   [%[src], #32]   \n\t"
+                :
+                :[src] "r" (src)
+                :"cc", "memory"
+                );
+
         vdst = vreinterpret_u8_u32(vld1_u32(dst));
+        asm volatile("pld   [%[dst], #32]   \n\t"
+                :
+                :[dst] "r" (dst)
+                :"cc", "memory"
+                );
 
         // Process src
         vsrc_wide = vmovl_u8(vsrc);
@@ -1210,6 +1235,13 @@ void S32A_D565_Opaque_Dither_neon (uint16_t * SK_RESTRICT dst,
         sg = vsrc.val[NEON_G];
         sb = vsrc.val[NEON_B];
 
+        asm volatile(
+                "pld   [%[src], #64]   \n\t"
+                :
+                :[src] "r" (src)
+                :"cc", "memory"
+                );
+
         /* calculate 'd', which will be 0..7
          * dbase[] is 0..7; alpha is 0..256; 16 bits suffice
          */
@@ -1235,6 +1267,13 @@ void S32A_D565_Opaque_Dither_neon (uint16_t * SK_RESTRICT dst,
 
         // need to pick up 8 dst's -- at 16 bits each, 128 bits
         dst8 = vld1q_u16(dst);
+        asm volatile(
+                "pld   [%[dst], #32]   \n\t"
+                :
+                :[dst] "r" (dst)
+                :"cc", "memory"
+                );
+
         dst_b = vandq_u16(dst8, vdupq_n_u16(SK_B16_MASK));
         dst_g = vshrq_n_u16(vshlq_n_u16(dst8, SK_R16_BITS), SK_R16_BITS + SK_B16_BITS);
         dst_r = vshrq_n_u16(dst8, SK_R16_SHIFT);    // clearing hi bits
@@ -1376,6 +1415,13 @@ void S32_D565_Opaque_Dither_neon(uint16_t* SK_RESTRICT dst,
         sr = vsrc.val[NEON_R];
         sg = vsrc.val[NEON_G];
         sb = vsrc.val[NEON_B];
+
+        asm volatile(
+                "pld   [%[src], #64]   \n\t"
+                :
+                :[src] "r" (src)
+                :"cc", "memory"
+                );
 
         /* XXX: if we want to prefetch, hide it in the above asm()
          * using the gcc __builtin_prefetch(), the prefetch will

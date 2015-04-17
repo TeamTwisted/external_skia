@@ -194,7 +194,7 @@ void SI8_opaque_D32_nofilter_DX_arm(const SkBitmapProcState& s,
 #endif // !defined(SK_CPU_ARM64) && SK_ARM_ARCH >= 6 && !defined(SK_CPU_BENDIAN)
 
 
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
 void Clamp_S32_opaque_D32_filter_DX_shaderproc(const SkBitmapProcState& s, int x, int y,
                                                SkPMColor* SK_RESTRICT colors, int count) {
     SkASSERT((s.fInvType & ~(SkMatrix::kTranslate_Mask |
@@ -840,7 +840,7 @@ void SkBitmapProcState::platformProcs() {
 
     switch (fBitmap->config()) {
         case SkBitmap::kIndex8_Config:
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
                 if ((SkShader::kRepeat_TileMode == fTileModeX) &&
                            (SkShader::kRepeat_TileMode == fTileModeY)) {
                     fShaderProc32 = Repeat_SI8_opaque_D32_filter_DX_shaderproc;
@@ -857,7 +857,7 @@ void SkBitmapProcState::platformProcs() {
             }
             break;
         case SkBitmap::kRGB_565_Config:
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
 		if (justDx && SkPaint::kNone_FilterLevel == fFilterLevel && isOpaque) {
                 fSampleProc32 = S16_opaque_D32_nofilter_DX_arm;
                 fShaderProc32 = NULL;
@@ -865,7 +865,7 @@ void SkBitmapProcState::platformProcs() {
 #endif
             break;
         case SkBitmap::kARGB_8888_Config:
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
             if (S32_opaque_D32_filter_DX == fSampleProc32 && clamp_clamp) {
                 fShaderProc32 = Clamp_S32_opaque_D32_filter_DX_shaderproc;
             } else if (S32_opaque_D32_nofilter_DX == fSampleProc32 && clamp_clamp) {

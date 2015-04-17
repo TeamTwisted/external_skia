@@ -1341,7 +1341,7 @@ void SkProcCoeffXfermode::xferA8(SkAlpha* SK_RESTRICT dst,
 
     if (NULL != proc) {
         if (NULL == aa) {
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
             if (srcout_modeproc == proc)
             {
                 asm volatile(
@@ -1381,7 +1381,7 @@ void SkProcCoeffXfermode::xferA8(SkAlpha* SK_RESTRICT dst,
                 SkPMColor res = proc(src[i], dst[i] << SK_A32_SHIFT);
                 dst[i] = SkToU8(SkGetPackedA32(res));
             }
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
             }
 #endif
         } else {

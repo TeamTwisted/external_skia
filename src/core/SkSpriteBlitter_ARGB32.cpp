@@ -65,7 +65,7 @@ static void S16_Opaque_D32(SkPMColor* SK_RESTRICT dst,
                                  int count, U8CPU alpha) {
     SkASSERT(255 == alpha);
     if (count > 0) {
-#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
         asm volatile (
                       "cmp        %[count], #8                    \n\t"
                       "vmov.u16   d6, #0xFF00                     \n\t"   // Load alpha value into q8 for later use.

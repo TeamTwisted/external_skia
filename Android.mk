@@ -54,7 +54,7 @@ endif
 
 ifneq ($(strip $(TARGET_FDO_CFLAGS)),)
 	# This should be the last -Oxxx specified in LOCAL_CFLAGS
-	LOCAL_CFLAGS += -O2
+	LOCAL_CFLAGS += -O3
 endif
 
 LOCAL_CFLAGS += \

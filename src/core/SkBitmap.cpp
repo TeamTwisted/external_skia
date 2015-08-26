@@ -225,6 +225,11 @@ bool SkBitmap::setConfig(Config config, int width, int height, size_t rowBytes,
     SkColorType ct = SkBitmapConfigToColorType(config);
     return this->setInfo(SkImageInfo::Make(width, height, ct, alphaType), rowBytes);
 }
+
+extern "C" void _ZN8SkBitmap9setConfigENS_6ConfigEiii(SkBitmap *bitmap,
+        SkBitmap::Config c, int width, int height, int rowBytes) {
+    bitmap->setConfig(c, width, height, (size_t) rowBytes);
+}
 #endif
 
 bool SkBitmap::setAlphaType(SkAlphaType alphaType) {
@@ -1104,9 +1109,44 @@ static bool GetBitmapAlpha(const SkBitmap& src, uint8_t* SK_RESTRICT alpha,
     } else if (kN32_SkColorType == colorType && !src.isOpaque()) {
         const SkPMColor* SK_RESTRICT s = src.getAddr32(0, 0);
         while (--h >= 0) {
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
+            asm volatile(
+                    "pld        [%[s], #0]                  \n\t"
+                    "mov        r6, %[s]                    \n\t"
+                    "mov        r7, %[alpha]                \n\t"
+                    "mov        r4, %[w]                    \n\t"
+                    "subs       r4, r4, #8                  \n\t"
+                    "blt        2f                          \n\t"
+
+                    "1:                                     \n\t"
+                    "vld4.8     {d0, d1, d2, d3}, [r6]!     \n\t"
+                    "subs       r4, r4, #8                  \n\t"
+                    "pld        [r6, #64]                   \n\t"
+                    "vst1.8     {d3}, [r7]!                 \n\t"
+                    "bge        1b                          \n\t"
+
+                    "2:                                     \n\t"
+                    "add        r4, r4, #8                  \n\t"
+                    "cmp        r4, #0                      \n\t"
+                    "ble        4f                          \n\t"
+
+                    "3:                                     \n\t"
+                    "ldr        r5, [r6], #4                \n\t"
+                    "subs       r4, r4, #1                  \n\t"
+                    "lsr        r5, r5, #24                 \n\t"
+                    "strb       r5, [r7], #1                \n\t"
+                    "bgt        3b                          \n\t"
+
+                    "4:                                     \n\t"
+                    :
+                    :[w] "r" (w), [s] "r" (s), [alpha] "r" (alpha)
+                    :"memory", "r4", "r5", "r6", "r7", "d0", "d1", "d2", "d3"
+                    );
+#else
             for (int x = 0; x < w; x++) {
                 alpha[x] = SkGetPackedA32(s[x]);
             }
+#endif
             s = (const SkPMColor*)((const char*)s + rb);
             alpha += alphaRowBytes;
         }

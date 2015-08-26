@@ -385,22 +385,22 @@ void S32A_Blend_BlitRow32_arm(SkPMColor* SK_RESTRICT dst,
                   /* ---------------------- */
 
                   /* src1, src1_scale */
-                  "and    r11, r12, r5, lsr #8       \n\t" /* ag = r11 = r5 masked by r12 lsr by #8 */
+                  "and    r14, r12, r5, lsr #8       \n\t" /* ag = r14 = r5 masked by r12 lsr by #8 */
                   "and    r4, r12, r5                \n\t" /* rb = r4 = r5 masked by r12 */
-                  "mul    r11, r11, %[alpha]         \n\t" /* ag = r11 times src_scale */
+                  "mul    r14, r14, %[alpha]         \n\t" /* ag = r14 times src_scale */
                   "mul    r4, r4, %[alpha]           \n\t" /* rb = r4 times src_scale */
-                  "and    r11, r11, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
+                  "and    r14, r14, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
                   "and    r4, r12, r4, lsr #8        \n\t" /* rb masked by mask (r12) */
-                  "orr    r5, r11, r4                \n\t" /* r5 = (src1, src_scale) */
+                  "orr    r5, r14, r4                \n\t" /* r5 = (src1, src_scale) */
 
                   /* dst1, dst1_scale */
-                  "and    r11, r12, r7, lsr #8       \n\t" /* ag = r11 = r7 masked by r12 lsr by #8 */
+                  "and    r14, r12, r7, lsr #8       \n\t" /* ag = r14 = r7 masked by r12 lsr by #8 */
                   "and    r4, r12, r7                \n\t" /* rb = r4 = r7 masked by r12 */
-                  "mul    r11, r11, r9               \n\t" /* ag = r11 times dst_scale (r9) */
+                  "mul    r14, r14, r9               \n\t" /* ag = r14 times dst_scale (r9) */
                   "mul    r4, r4, r9                 \n\t" /* rb = r4 times dst_scale (r9) */
-                  "and    r11, r11, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
+                  "and    r14, r14, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
                   "and    r4, r12, r4, lsr #8        \n\t" /* rb masked by mask (r12) */
-                  "orr    r9, r11, r4                \n\t" /* r9 = (dst1, dst_scale) */
+                  "orr    r9, r14, r4                \n\t" /* r9 = (dst1, dst_scale) */
 
                   /* ---------------------- */
                   "add    r9, r5, r9                 \n\t" /* *dst = src plus dst both scaled */
@@ -409,22 +409,22 @@ void S32A_Blend_BlitRow32_arm(SkPMColor* SK_RESTRICT dst,
                   /* ====================== */
 
                   /* src2, src2_scale */
-                  "and    r11, r12, r6, lsr #8       \n\t" /* ag = r11 = r6 masked by r12 lsr by #8 */
+                  "and    r14, r12, r6, lsr #8       \n\t" /* ag = r14 = r6 masked by r12 lsr by #8 */
                   "and    r4, r12, r6                \n\t" /* rb = r4 = r6 masked by r12 */
-                  "mul    r11, r11, %[alpha]         \n\t" /* ag = r11 times src_scale */
+                  "mul    r14, r14, %[alpha]         \n\t" /* ag = r14 times src_scale */
                   "mul    r4, r4, %[alpha]           \n\t" /* rb = r4 times src_scale */
-                  "and    r11, r11, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
+                  "and    r14, r14, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
                   "and    r4, r12, r4, lsr #8        \n\t" /* rb masked by mask (r12) */
-                  "orr    r6, r11, r4                \n\t" /* r6 = (src2, src_scale) */
+                  "orr    r6, r14, r4                \n\t" /* r6 = (src2, src_scale) */
 
                   /* dst2, dst2_scale */
-                  "and    r11, r12, r8, lsr #8       \n\t" /* ag = r11 = r8 masked by r12 lsr by #8 */
+                  "and    r14, r12, r8, lsr #8       \n\t" /* ag = r14 = r8 masked by r12 lsr by #8 */
                   "and    r4, r12, r8                \n\t" /* rb = r4 = r8 masked by r12 */
-                  "mul    r11, r11, r10              \n\t" /* ag = r11 times dst_scale (r10) */
+                  "mul    r14, r14, r10              \n\t" /* ag = r14 times dst_scale (r10) */
                   "mul    r4, r4, r10                \n\t" /* rb = r4 times dst_scale (r6) */
-                  "and    r11, r11, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
+                  "and    r14, r14, r12, lsl #8      \n\t" /* ag masked by reverse mask (r12) */
                   "and    r4, r12, r4, lsr #8        \n\t" /* rb masked by mask (r12) */
-                  "orr    r10, r11, r4               \n\t" /* r10 = (dst2, dst_scale) */
+                  "orr    r10, r14, r4               \n\t" /* r10 = (dst2, dst_scale) */
 
                   "sub    %[count], %[count], #2     \n\t" /* decrease count by 2 */
                   /* ---------------------- */
@@ -479,7 +479,7 @@ void S32A_Blend_BlitRow32_arm(SkPMColor* SK_RESTRICT dst,
                   "3:                                \n\t" /* <exit> */
                   : [dst] "+r" (dst), [src] "+r" (src), [count] "+r" (count), [alpha] "+r" (alpha)
                   :
-                  : "cc", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "memory"
+                  : "cc", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r12", "r14", "memory"
                   );
 
 }

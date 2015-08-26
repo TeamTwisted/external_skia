@@ -60,6 +60,133 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////////
 
+static void S16_Opaque_D32(SkPMColor* SK_RESTRICT dst,
+                                 const uint16_t* SK_RESTRICT src,
+                                 int count, U8CPU alpha) {
+    SkASSERT(255 == alpha);
+    if (count > 0) {
+#if defined(__ARM_HAVE_NEON) && defined(SK_CPU_ARM32)
+        asm volatile (
+                      "cmp        %[count], #8                    \n\t"
+                      "vmov.u16   d6, #0xFF00                     \n\t"   // Load alpha value into q8 for later use.
+                      "blt        2f                              \n\t"   // if count < 0, branch to label 2
+                      "vmov.u8    d5, #0xFF                       \n\t"                
+                      "sub        %[count], %[count], #8          \n\t"   // count -= 8
+
+                      "1:                                         \n\t"   // 8 loop
+                      // Handle 8 pixels in one loop.
+                      "vld1.u16   {q0}, [%[src]]!                 \n\t"   // load eight src 565 pixels
+                      "pld        [%[src], #64]                   \n\t"
+                      "subs       %[count], %[count], #8          \n\t"   // count -= 8, set flag
+                      "vshrn.u16  d2, q0, #8                      \n\t" //R
+                      "vshrn.u16  d3, q0, #3                      \n\t" //G
+                      "vsli.u16   q0, q0, #5                      \n\t" //B
+                      "vsri.u8    d2, d2, #5                      \n\t"
+                      "vsri.u8    d3, d3, #6                      \n\t"
+                      "vshrn.u16  d4, q0, #2                      \n\t"
+                      "vst4.u8    {d2, d3, d4, d5}, [%[dst]]!     \n\t"
+
+                      "bge        1b                              \n\t"   // loop if count >= 0
+                      "add        %[count], %[count], #8          \n\t"
+
+                      "2:                                         \n\t"   // exit of 8 loop
+                      "cmp        %[count], #4                    \n\t"   //
+                      "blt        3f                              \n\t"   // if count < 0, branch to label 3
+                      "sub        %[count], %[count], #4          \n\t"
+                      // Handle 4 pixels at once
+                      "vld1.u16   {d0}, [%[src]]!                 \n\t"   // load eight src 565 pixels
+
+                      "vshl.u16   d2, d0, #5                      \n\t"   // put green in the 6 high bits of d2
+                      "vshl.u16   d1, d0, #11                     \n\t"   // put blue in the 5 high bits of d1
+                      "vmov.u16   d3, d6                          \n\t"   // copy alpha from d6
+                      "vsri.u16   d3, d1, #8                      \n\t"   // put blue below alpha in d3
+                      "vsri.u16   d3, d1, #13                     \n\t"   // put 3 MSB blue below blue in d3
+                      "vsri.u16   d2, d2, #6                      \n\t"   // put 2 MSB green below green in d2
+                      "vsri.u16   d2, d0, #8                      \n\t"   // put red below green in d2
+                      "vsri.u16   d2, d0, #13                     \n\t"   // put 3 MSB red below red in d2
+                      "vzip.16    d2, d3                          \n\t"   // interleave d2 and d3
+                      "vst1.16    {d2, d3}, [%[dst]]!             \n\t"   // store d2 and d3 to dst
+
+                      "3:                                         \n\t"   // end
+                      : [src] "+r" (src), [dst] "+r" (dst), [count] "+r" (count)
+                      :
+                      : "cc", "memory","d0","d1","d2","d3","d4","d5","d6"
+                     );
+
+        for (int i = (count & 3); i > 0; --i) {
+            *dst = SkPixel16ToPixel32(*src);
+            src += 1;
+            dst += 1;
+        }
+
+#else
+        do {
+            *dst = SkPixel16ToPixel32(*src);
+            src += 1;
+            dst += 1;
+        } while (--count > 0);
+#endif
+    }
+}
+
+static void S16_Blend_D32(SkPMColor* SK_RESTRICT dst,
+                                 const uint16_t* SK_RESTRICT src,
+                                 int count, U8CPU alpha) {
+    SkASSERT(alpha <= 255);
+    if (count > 0) {
+        do {
+            *dst = SkAlphaMulQ(SkPixel16ToPixel32(*src), alpha);
+            src += 1;
+            dst += 1;
+        } while (--count > 0);
+    }
+}
+
+class Sprite_D32_S16 : public SkSpriteBlitter {
+public:
+    Sprite_D32_S16(const SkBitmap& src, U8CPU alpha)  : INHERITED(src) {
+        SkASSERT(src.colortype() == kRGB_565_ColorType);
+
+        if (255 != alpha) {
+            fProc32 = S16_Blend_D32;
+        }
+        else {
+            fProc32 = S16_Opaque_D32;
+        }
+        fAlpha = alpha;
+    }
+
+    virtual void blitRect(int x, int y, int width, int height) {
+        SkASSERT(width > 0 && height > 0);
+        uint32_t* SK_RESTRICT dst = fDevice->getAddr32(x, y);
+        const uint16_t* SK_RESTRICT src = fSource->getAddr16(x - fLeft,
+                                                             y - fTop);
+        size_t dstRB = fDevice->rowBytes();
+        size_t srcRB = fSource->rowBytes();
+        Proc_S16_D32 proc = fProc32;
+        U8CPU  alpha = fAlpha;
+
+        do {
+            proc(dst, src, width, alpha);
+            dst = (uint32_t* SK_RESTRICT)((char*)dst + dstRB);
+            src = (const uint16_t* SK_RESTRICT)((const char*)src + srcRB);
+        } while (--height != 0);
+    }
+
+private:
+    typedef void (*Proc_S16_D32)(uint32_t* dst,
+                         const uint16_t* src,
+                         int count, U8CPU alpha);
+
+
+    Proc_S16_D32   fProc32;
+    U8CPU               fAlpha;
+
+    typedef SkSpriteBlitter INHERITED;
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
 class Sprite_D32_XferFilter : public SkSpriteBlitter {
 public:
     Sprite_D32_XferFilter(const SkBitmap& source, const SkPaint& paint)
@@ -298,6 +425,12 @@ SkSpriteBlitter* SkSpriteBlitter::ChooseD32(const SkBitmap& source, const SkPain
             } else {
                 // this can handle alpha, but not xfermode or filter
                 blitter = allocator->createT<Sprite_D32_S32>(source, alpha);
+            }
+            break;
+        case kRGB_565_SkColorType:
+            if (!xfermode && !filter)
+            {
+                blitter = allocator->createT<Sprite_D32_S16>(source, alpha);
             }
             break;
         default:

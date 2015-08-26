@@ -18,16 +18,6 @@
 
 #if SK_ARM_NEON_IS_ALWAYS && defined(SK_CPU_LENDIAN)
     #include <arm_neon.h>
-extern void SkRGB16BlitterBlitV_neon(uint16_t* device,
-                                     int height,
-                                     size_t deviceRB,
-                                     unsigned scale,
-                                     uint32_t src32);
-
-extern void SkRGB16BlitterBlitH_neon(uint16_t* device,
-                                     int height,
-                                     unsigned scale,
-                                     uint32_t src32);
 #else
     // if we don't have neon, then our black blitter is worth the extra code
     #define USE_BLACK_BLITTER
@@ -342,14 +332,10 @@ void SkRGB16_Opaque_Blitter::blitAntiH(int x, int y,
                 uint32_t src32 = srcExpanded * scale5;
                 scale5 = 32 - scale5; // now we can use it on the device
                 int n = count;
-#if SK_ARM_NEON_IS_ALWAYS && defined(SK_CPU_LENDIAN)
-                SkRGB16BlitterBlitH_neon(device, n, scale5, src32);
-#else
                 do {
                     uint32_t dst32 = SkExpand_rgb_16(*device) * scale5;
                     *device++ = SkCompact_rgb_16((src32 + dst32) >> 5);
                 } while (--n != 0);
-#endif
                 goto DONE;
             }
         }
@@ -493,15 +479,11 @@ void SkRGB16_Opaque_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
     unsigned scale5 = SkAlpha255To256(alpha) >> 3;
     uint32_t src32 =  fExpandedRaw16 * scale5;
     scale5 = 32 - scale5;
-#if SK_ARM_NEON_IS_ALWAYS && defined(SK_CPU_LENDIAN)
-    SkRGB16BlitterBlitV_neon(device, height, deviceRB, scale5, src32);
-#else
     do {
         uint32_t dst32 = SkExpand_rgb_16(*device) * scale5;
         *device = SkCompact_rgb_16((src32 + dst32) >> 5);
         device = (uint16_t*)((char*)device + deviceRB);
     } while (--height != 0);
-#endif
 }
 
 void SkRGB16_Opaque_Blitter::blitRect(int x, int y, int width, int height) {
@@ -567,10 +549,6 @@ static uint32_t pmcolor_to_expand16(SkPMColor c) {
     unsigned g = SkGetPackedG32(c);
     unsigned b = SkGetPackedB32(c);
     return (g << 24) | (r << 13) | (b << 2);
-}
-
-extern "C" {
-void skia_androidopt_blend32_16_optimized(uint32_t src, unsigned scale, uint16_t **pdst, int *pcount) __attribute__((weak));
 }
 
 #if defined(__ARM_HAVE_NEON) && defined(SK_CPU_LENDIAN)
@@ -718,11 +696,14 @@ static void blend32_16_row_neon(const SkPMColor* SK_RESTRICT src,
 }
 
 #endif
+extern "C" {
+void skia_androidopt_blend32_16_optimized(uint32_t src, unsigned scale, uint16_t **pdst, int *pcount) __attribute__((weak));
+}
+
 static inline void blend32_16_row(SkPMColor src, uint16_t dst[], int count) {
     SkASSERT(count > 0);
     uint32_t src_expand = pmcolor_to_expand16(src);
     unsigned scale = SkAlpha255To256(0xFF - SkGetPackedA32(src)) >> 3;
-
     if (skia_androidopt_blend32_16_optimized) {
         skia_androidopt_blend32_16_optimized(src_expand, scale, &dst, &count);
     }
@@ -735,6 +716,7 @@ static inline void blend32_16_row(SkPMColor src, uint16_t dst[], int count) {
     }
 }
 
+#ifndef __arm__
 void SkRGB16_Blitter::blitH(int x, int y, int width) {
     SkASSERT(width > 0);
     SkASSERT(x + width <= fDevice.width());
@@ -752,23 +734,153 @@ void SkRGB16_Blitter::blitH(int x, int y, int width) {
     blend32_16_row(fSrcColor32, device, width);
 #endif
 }
+#else
+void SkRGB16_Blitter::blitH(int x, int y, int width) {
+    SkASSERT(width > 0);
+    SkASSERT(x + width <= fDevice.width());
+    uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
+    SkPMColor src32 = fSrcColor32;
+    uint32_t src_expand = pmcolor_to_expand16(src32);
+    unsigned scale = SkAlpha255To256(0xFF - SkGetPackedA32(src32)) >> 3;
 
-#ifdef NEON_BLITANTIH
-extern "C" void blitAntiH_NEON(const SkAlpha* SK_RESTRICT antialias,
-                               uint16_t * SK_RESTRICT device,
-                               const int16_t* SK_RESTRICT runs,
-                               uint32_t srcExpanded, unsigned scale);
+#ifdef SK_USE_NEON
+      asm volatile (
+            "cmp        %[width], #0                        \n\t"  //width> 0?
+            "ble        5f                                  \n\t"
+
+            "pld        [%[device], #0]                     \n\t"
+            "movw       r9, #0xf81f                         \n\t"
+            "movt       r9, #0x07e0                         \n\t"
+
+            "vdup.32    q7, r9                              \n\t"//q7=mask_vec
+            "vdup.32    q6, %[src_expand]                   \n\t"
+            "vdup.32    q8, %[scale]                        \n\t"
+
+            "movs       r4, %[width], lsr #4                \n\t"
+            "beq        2f                                  \n\t"
+
+
+            "1:                                             \n\t"
+            "vld1.u16   {d0,d1,d2,d3}, [%[device]]          \n\t"
+            "pld        [%[device], #128]                   \n\t"
+            "subs       r4, r4, #1                          \n\t"
+            
+            "vand.32    q2, q0, q7                          \n\t"
+            "vand.32    q4, q1, q7                          \n\t"
+            "vrev32.16  q3, q0                              \n\t"
+            "vrev32.16  q5, q1                              \n\t"
+            "vand.32    q3, q3, q7                          \n\t"
+            "vand.32    q5, q5, q7                          \n\t"
+
+            "vmul.i32   q2, q2, q8                          \n\t"
+            "vmul.i32   q4, q4, q8                          \n\t"
+            "vmul.i32   q3, q3, q8                          \n\t"
+            "vmul.i32   q5, q5, q8                          \n\t"
+            "vadd.u32   q2, q2, q6                          \n\t"
+            "vadd.u32   q4, q4, q6                          \n\t"
+            "vadd.u32   q3, q3, q6                          \n\t"
+            "vadd.u32   q5, q5, q6                          \n\t"
+            "vshr.u32   q2, q2, #5                          \n\t"
+            "vshr.u32   q4, q4, #5                          \n\t"
+            "vshr.u32   q3, q3, #5                          \n\t"
+            "vshr.u32   q5, q5, #5                          \n\t"
+
+            "vand.u32   q2, q2, q7                          \n\t"
+            "vand.u32   q4, q4, q7                          \n\t"
+            "vand.u32   q3, q3, q7                          \n\t"
+            "vand.u32   q5, q5, q7                          \n\t"
+            "vrev32.16  q3, q3                              \n\t"
+            "vrev32.16  q5, q5                              \n\t"
+            "vorr.u16   q0, q2, q3                          \n\t"
+            "vorr.u16   q1, q4, q5                          \n\t"
+
+            "vst1.u16   {d0,d1,d2,d3}, [%[device]]!         \n\t"
+            "bne        1b                                  \n\t"
+
+            "2:                                             \n\t"
+            "ands       r4, %[width], #0xF                  \n\t"
+            "beq        5f                                  \n\t"
+            "cmp        r4, #8                              \n\t"
+            "blt        3f                                  \n\t"
+            
+            "vld1.u16   {d0,d1}, [%[device]]                \n\t"
+            "vand.32    q2, q0, q7                          \n\t"
+            "vrev32.16  q3, q0                              \n\t"
+            "vand.32    q3, q3, q7                          \n\t"
+
+            "vmul.i32   q2, q2, q8                          \n\t"
+            "vmul.i32   q3, q3, q8                          \n\t"
+            "vadd.u32   q2, q2, q6                          \n\t"
+            "vadd.u32   q3, q3, q6                          \n\t"
+            "vshr.u32   q2, q2, #5                          \n\t"
+            "vshr.u32   q3, q3, #5                          \n\t"
+
+            "vand.u32   q2, q2, q7                          \n\t"
+            "vand.u32   q3, q3, q7                          \n\t"
+            "vrev32.16  q3, q3                              \n\t"
+            "vorr.u16   q0, q2, q3                          \n\t"
+
+            "vst1.u16   {d0, d1}, [%[device]]!              \n\t"
+
+
+            "3:                                             \n\t"
+            "ands       r4, %[width], #0x7                  \n\t"
+            "beq        5f                                  \n\t"
+
+            "4:                                             \n\t"
+            "ldrh       r10, [%[device], #0]                \n\t"  //r10 = current = *device
+            "subs       r4, r4, #1                          \n\t"  //width--;
+            "pld        [%[device], #8]                     \n\t"
+            "orr        r8, r10, r10, lsl #16               \n\t" //(current << 16 | current)
+            "and        r10, r8, r9                         \n\t" //r10 = &mask
+            "mla        r8, r10, %[scale], %[src_expand]    \n\t"  //r8 = src_expand + dst_expand
+            "and        r8, r9, r8, lsr #5                  \n\t" //r8 & mask
+            "orr        r10, r8, r8, lsr #16                \n\t" //must trunk the high 16bits, if not, generate error result
+            "strh       r10, [%[device]], #2                \n\t"
+            "bne        4b                                  \n\t"
+
+            "5:                                             \n\t"
+            :[device] "+r" (device)
+            :[width] "r" (width), [src_expand] "r" (src_expand), [scale] "r" (scale)
+            :"memory", "r4", "r8", "r9", "r10", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17"
+            );
+#else
+    asm volatile(
+            "pld        [%[device]]                         \n\t"
+            "mov        r9, #0x7E0                          \n\t"
+            "mov        r10, #0xFF                          \n\t"
+            "orr        r10, r10, r10, lsl #8               \n\t" //r10 = 0xFFFF
+            "bic        r10, #0x7E0                         \n\t"
+            "orr        r9, r10, r9, lsl #16                \n\t"  //r9 = mask
+
+            "1:                                             \n\t"
+            "ldrh       r10, [%[device], #0]                \n\t"  //r10 = current = *device
+            "subs       %[width], %[width], #1              \n\t"  //width--;
+            "pld        [%[device], #8]                     \n\t"
+            "orr        r8, r10, r10, lsl #16               \n\t" //(current << 16 | current)
+            "and        r10, r8, r9                         \n\t" //r10 = &mask
+            "mla        r8, r10, %[scale], %[src_expand]    \n\t"  //r8 = src_expand + dst_expand
+            "and        r8, r9, r8, lsr #5                  \n\t" //r8 & mask
+            "orr        r10, r8, r8, lsr #16                \n\t" //must trunk the high 16bits, if not, generate error result
+            "strh       r10, [%[device]], #2                \n\t"
+            "bne        1b                                  \n\t"
+
+            :[device] "+r" (device)
+            :[width] "r" (width), [scale] "r" (scale), [src_expand] "r" (src_expand)
+            :"memory", "r8", "r9", "r10"
+            );
+#endif
+}
 #endif
 
+#ifndef __arm__
 void SkRGB16_Blitter::blitAntiH(int x, int y,
                                 const SkAlpha* SK_RESTRICT antialias,
                                 const int16_t* SK_RESTRICT runs) {
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
     uint32_t    srcExpanded = fExpandedRaw16;
     unsigned    scale = fScale;
-#ifdef NEON_BLITANTIH
-    blitAntiH_NEON(antialias, device, runs, srcExpanded, scale);
-#else
+
     // TODO: respect fDoDither
     for (;;) {
         int count = runs[0];
@@ -784,20 +896,75 @@ void SkRGB16_Blitter::blitAntiH(int x, int y,
             unsigned scale5 = SkAlpha255To256(aa) * scale >> (8 + 3);
             uint32_t src32 =  srcExpanded * scale5;
             scale5 = 32 - scale5;
-#if SK_ARM_NEON_IS_ALWAYS && defined(SK_CPU_LENDIAN)
-            SkRGB16BlitterBlitH_neon(device, count, scale5, src32);
-#else
             do {
                 uint32_t dst32 = SkExpand_rgb_16(*device) * scale5;
                 *device++ = SkCompact_rgb_16((src32 + dst32) >> 5);
             } while (--count != 0);
-#endif
             continue;
         }
         device += count;
     }
-#endif
 }
+#else
+void SkRGB16_Blitter::blitAntiH(int x, int y,
+                                const SkAlpha* SK_RESTRICT antialias,
+                                const int16_t* SK_RESTRICT runs) {
+    uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
+    uint32_t    srcExpanded = fExpandedRaw16;
+    unsigned    scale = fScale;
+
+    //generate mask
+    uint32_t mask = 0;
+    asm volatile(
+            "mov        %[mask], #0x7E0                     \n\t"
+            "mov        r10, #0xFF                          \n\t"
+            "orr        r10, r10, r10, lsl #8               \n\t" //r10 = 0xFFFF
+            "bic        r10, #0x7E0                         \n\t"
+            "orr        %[mask], r10, %[mask], lsl #16      \n\t" //r9 = mask
+            :[mask] "+r" (mask)
+            :
+            :"memory", "r10"
+            );
+
+    // TODO: respect fDoDither
+    for (;;) {
+        int count = runs[0];
+        SkASSERT(count >= 0);
+        if (count <= 0) {
+            return;
+        }
+        runs += count;
+
+        unsigned aa = antialias[0];
+        antialias += count;
+        if (aa) {
+            unsigned scale5 = SkAlpha255To256(aa) * scale >> (8 + 3);
+            uint32_t src32 =  srcExpanded * scale5;
+            scale5 = 32 - scale5;
+
+            asm volatile(
+                    "2:                                             \n\t" //inner loop
+                    "ldrh       r10, [%[device], #0]                \n\t"  //r10 = current = *device
+                    "subs       %[count], %[count], #1              \n\t"  //width--;
+                    "pld        [%[device], #8]                     \n\t"
+                    "orr        r9, r10, r10, lsl #16               \n\t" //(current << 16 | current)
+                    "and        r10, r9, %[mask]                    \n\t" //r10 = &mask
+                    "mla        r9, r10, %[scale5], %[src32]        \n\t"  //r9 = src_expand + dst_expand
+                    "and        r9, %[mask], r9, lsr #5             \n\t" //r9 & mask
+                    "orr        r10, r9, r9, lsr #16                \n\t" //must trunk the high 16bits, if not, generate error result
+                    "strh       r10, [%[device]], #2                \n\t"
+                    "bne        2b                                  \n\t"
+                    :[device] "+r" (device)
+                    :[count] "r" (count), [mask] "r" (mask), [scale5] "r" (scale5), [src32] "r" (src32)
+                    :"memory", "r9", "r10"
+                    );
+
+            continue;
+        }
+        device += count;
+    }
+}
+#endif
 
 static inline void blend_8_pixels(U8CPU bw, uint16_t dst[], unsigned dst_scale,
                                   U16CPU srcColor) {
@@ -856,17 +1023,14 @@ void SkRGB16_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
     unsigned scale5 = SkAlpha255To256(alpha) * fScale >> (8 + 3);
     uint32_t src32 =  fExpandedRaw16 * scale5;
     scale5 = 32 - scale5;
-#if SK_ARM_NEON_IS_ALWAYS && defined(SK_CPU_LENDIAN)
-    SkRGB16BlitterBlitV_neon(device, height, deviceRB, scale5, src32);
-#else
     do {
         uint32_t dst32 = SkExpand_rgb_16(*device) * scale5;
         *device = SkCompact_rgb_16((src32 + dst32) >> 5);
         device = (uint16_t*)((char*)device + deviceRB);
     } while (--height != 0);
-#endif
 }
 
+#ifndef __arm__
 void SkRGB16_Blitter::blitRect(int x, int y, int width, int height) {
     SkASSERT(x + width <= fDevice.width() && y + height <= fDevice.height());
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
@@ -889,6 +1053,164 @@ void SkRGB16_Blitter::blitRect(int x, int y, int width, int height) {
         device = (uint16_t*)((char*)device + deviceRB);
     }
 }
+#else
+void SkRGB16_Blitter::blitRect(int x, int y, int width, int height) {
+    SkASSERT(x + width <= fDevice.width() && y + height <= fDevice.height());
+    uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
+    size_t deviceRB = fDevice.rowBytes();
+    SkPMColor src32 = fSrcColor32;
+    uint32_t src_expand = pmcolor_to_expand16(src32);
+    unsigned scale = SkAlpha255To256(0xFF - SkGetPackedA32(src32)) >> 3;
+
+#ifdef SK_USE_NEON
+       asm volatile(
+            "cmp        %[height], #0                       \n\t"  //height > 0?
+            "ble        7f                                  \n\t"
+
+            "cmp        %[width], #0                        \n\t"  //width > 0?
+            "ble        7f                                  \n\t"
+
+            "pld        [r7, #0]                            \n\t"
+            //r9=mask
+            "movw       r9, #0xf81f                         \n\t"
+            "movt       r9, #0x07e0                         \n\t"
+
+            "vdup.32    q7, r9                              \n\t"  //q7 = mask_vec
+            "vdup.32    q6, %[src_expand]                   \n\t"
+            "vdup.32    q8, %[scale]                        \n\t"
+
+            "1:                                             \n\t"
+            "movs       r4, %[width], lsr #4                \n\t"//r4 = count / 16
+            "mov        r7, %[device]                       \n\t"//r7 = device
+            "beq        3f                                  \n\t" 
+
+            "2:                                             \n\t" 
+            "vld1.u16   {d0,d1,d2,d3}, [r7]                 \n\t"
+            "pld        [r7, #128]                          \n\t"
+            "subs       r4, r4, #1                          \n\t"
+            "vand.32    q2, q0, q7                          \n\t"
+            "vand.32    q4, q1, q7                          \n\t"
+            "vrev32.16  q3, q0                              \n\t"
+            "vrev32.16  q5, q1                              \n\t"
+            "vand.32    q3, q3, q7                          \n\t"
+            "vand.32    q5, q5, q7                          \n\t"
+            "vmul.i32   q2, q2, q8                          \n\t"
+            "vmul.i32   q4, q4, q8                          \n\t"
+            "vmul.i32   q3, q3, q8                          \n\t"
+            "vmul.i32   q5, q5, q8                          \n\t"
+            "vadd.u32   q2, q2, q6                          \n\t"
+            "vadd.u32   q4, q4, q6                          \n\t"
+            "vadd.u32   q3, q3, q6                          \n\t"
+            "vadd.u32   q5, q5, q6                          \n\t"
+            "vshr.u32   q2, q2, #5                          \n\t"
+            "vshr.u32   q4, q4, #5                          \n\t"
+            "vshr.u32   q3, q3, #5                          \n\t"
+            "vshr.u32   q5, q5, #5                          \n\t"
+
+            "vand.u32   q2, q2, q7                          \n\t"
+            "vand.u32   q4, q4, q7                          \n\t"
+            "vand.u32   q3, q3, q7                          \n\t"
+            "vand.u32   q5, q5, q7                          \n\t"
+            "vrev32.16  q3, q3                              \n\t"
+            "vrev32.16  q5, q5                              \n\t"
+            "vorr.u16   q0, q2, q3                          \n\t"
+            "vorr.u16   q1, q4, q5                          \n\t"
+            "vst1.u16   {d0, d1, d2, d3}, [r7]!             \n\t"//device
+            "bne        2b                                  \n\t"
+            
+            "3:                                             \n\t"
+            "ands       r4, %[width], #0xF                  \n\t"
+            "beq        6f                                  \n\t"
+            "cmp        r4, #8                              \n\t"
+            "blt        4f                                  \n\t"
+
+            "vld1.u16   {d0,d1}, [r7]                       \n\t"
+            "vand.32    q2, q0, q7                          \n\t"
+            "vrev32.16  q3, q0                              \n\t"
+            "vand.32    q3, q3, q7                          \n\t"
+
+            "vmul.i32   q2, q2, q8                          \n\t"
+            "vmul.i32   q3, q3, q8                          \n\t"
+            "vadd.u32   q2, q2, q6                          \n\t"
+            "vadd.u32   q3, q3, q6                          \n\t"
+            "vshr.u32   q2, q2, #5                          \n\t"
+            "vshr.u32   q3, q3, #5                          \n\t"
+
+            "vand.u32   q2, q2, q7                          \n\t"
+            "vand.u32   q3, q3, q7                          \n\t"
+            "vrev32.16  q3, q3                              \n\t"
+            "vorr.u16   q0, q2, q3                          \n\t"
+            "vst1.u16   {d0, d1}, [r7]!                     \n\t"//device
+
+            "4:                                             \n\t"
+            "ands       r4, %[width], #0x7                  \n\t"
+            "beq        6f                                  \n\t"
+
+            "5:                                             \n\t"
+            "ldrh       r10, [r7, #0]                       \n\t" //r10 = current = *device
+            "subs       r4, r4, #1                          \n\t" //width--;
+            "pld        [r7, #8]                            \n\t"
+            "orr        r8, r10, r10, lsl #16               \n\t" //(current << 16 | current)
+            "and        r10, r8, r9                         \n\t" //r10 = &mask
+            "mla        r8, r10, %[scale], %[src_expand]    \n\t" //r8 = src_expand + dst_expand
+            "and        r8, r9, r8, lsr #5                  \n\t" //r8 & mask
+            "orr        r10, r8, r8, lsr #16                \n\t" //must trunk the high 16bits, if not, generate error result
+            "strh       r10, [r7], #2                       \n\t"
+            "bne        5b                                  \n\t"
+            
+            "6:                                             \n\t"
+            "subs       %[height], %[height], #1            \n\t"
+            "add        %[device], %[device], %[deviceRB]   \n\t"
+            "bne        1b                                  \n\t"
+
+            "7:                                             \n\t"
+            :[device] "+r" (device), [height] "+r" (height)
+            :[width] "r" (width), [deviceRB] "r" (deviceRB), [src_expand] "r" (src_expand), [scale] "r" (scale)
+            :"memory", "r4", "r7", "r8", "r9", "r10", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17"
+            );
+             
+#else
+    //r7 init device
+    //r9 mask
+    //r10 r8 lr
+    asm volatile(
+            "pld        [%[device]]                         \n\t"
+            "mov        r9, #0x7E0                          \n\t"
+            "mov        r10, #0xFF                          \n\t"
+            "orr        r10, r10, r10, lsl #8               \n\t" //r10 = 0xFFFF
+            "bic        r10, #0x7E0                         \n\t"
+            "orr        r9, r10, r9, lsl #16                \n\t"  //r9 = mask
+
+            "cmp        %[height], #0                       \n\t"  //height > 0?
+            "ble        3f                                  \n\t"
+
+            "1:                                             \n\t" //outer loop
+            "mov        lr, %[width]                        \n\t" //lr = width
+            "mov        r7, %[device]                       \n\t" //r7 = init device
+            "2:                                             \n\t" //inner loop
+            "ldrh       r10, [r7, #0]                       \n\t"  //r10 = current = *device
+            "subs       lr, lr, #1                          \n\t"  //width--;
+            "pld        [r7, #8]                            \n\t"
+            "orr        r8, r10, r10, lsl #16               \n\t" //(current << 16 | current)
+            "and        r10, r8, r9                         \n\t" //r10 = &mask
+            "mla        r8, r10, %[scale], %[src_expand]    \n\t"  //r8 = src_expand + dst_expand
+            "and        r8, r9, r8, lsr #5                  \n\t" //r8 & mask
+            "orr        r10, r8, r8, lsr #16                \n\t" //must trunk the high 16bits, if not, generate error result
+            "strh       r10, [r7], #2                       \n\t"
+            "bne        2b                                  \n\t"
+
+            "subs       %[height], %[height], #1            \n\t"
+            "add        %[device], %[device], %[deviceRB]   \n\t"
+            "bne        1b                                  \n\t"
+
+            "3:                                             \n\t"
+            :[device] "+r" (device), [height] "+r" (height)
+            :[width] "r" (width), [deviceRB] "r" (deviceRB), [src_expand] "r" (src_expand), [scale] "r" (scale)
+            :"memory", "r7", "r8", "r9", "r10", "lr"
+            );
+#endif
+}
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 
